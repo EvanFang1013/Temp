@@ -1,1 +1,303 @@
 
+import Adafruit_ADS1x15
+import sys
+from PyQt5.QtGui  import *
+from PyQt5.QtCore import *
+#from PyQt5.QtWidgets import QApplication, QDialog,QMainWindow
+from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import *
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
+from matplotlib.lines import Line2D
+import threading
+from queue import Queue
+import time
+import numpy as np
+import matplotlib.pyplot as plt
+import pyqtgraph as pg
+from pyqtgraph.Qt import QtCore, QtGui
+from matplotlib import animation
+from matplotlib.animation import TimedAnimation
+from collections import deque
+from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
+
+event1 = Queue()
+event2 = Queue()
+event3 = Queue()
+event4 = Queue()
+timeint = time.time()
+
+class UpdateData(QThread):
+    update_date1 = pyqtSignal(list)
+    update_date2 = pyqtSignal(list)
+    update_date3 = pyqtSignal(list)
+    update_date4 = pyqtSignal(list)
+    #data_signal = pyqtSignal(float)
+    
+    
+    def run(self):       
+        while True:
+            getdata1=event1.get()
+            getdata2=event2.get()
+            getdata3=event3.get()
+            getdata4=event4.get()
+            
+            self.update_date1.emit(getdata1)
+            self.update_date2.emit(getdata2)
+            self.update_date3.emit(getdata3)
+            self.update_date4.emit(getdata4)
+            #self.data_signal.emit(getdata1[0])
+
+class Window(QDialog):
+           
+    def __init__(self):
+        QDialog.__init__(self)
+        self.setWindowTitle('A2D Data connect')
+        self.resize(1600, 700)
+
+        self.main_frame = QWidget()
+        self.plot_frame = QWidget()
+    
+    
+        self.MyTable1 = QTableWidget(1,4)
+        self.MyTable1.setMaximumSize(400,65)
+        self.MyTable2 = QTableWidget(1,4)
+        self.MyTable2.setMaximumSize(400,65)
+        self.MyTable3 = QTableWidget(1,4)
+        self.MyTable3.setMaximumSize(400,65)
+        self.MyTable4 = QTableWidget(1,4)
+        self.MyTable4.setMaximumSize(400,65)
+        
+        self.MyTable1.setColumnWidth(0, 90);
+        self.MyTable1.setColumnWidth(1, 90);
+        self.MyTable1.setColumnWidth(2, 90);
+        self.MyTable1.setColumnWidth(3, 90);
+        self.MyTable2.setColumnWidth(0, 90);
+        self.MyTable2.setColumnWidth(1, 90);
+        self.MyTable2.setColumnWidth(2, 90);
+        self.MyTable2.setColumnWidth(3, 90);
+        self.MyTable3.setColumnWidth(0, 90);
+        self.MyTable3.setColumnWidth(1, 90);
+        self.MyTable3.setColumnWidth(2, 90);
+        self.MyTable3.setColumnWidth(3, 90);
+        self.MyTable4.setColumnWidth(0, 90);
+        self.MyTable4.setColumnWidth(1, 90);
+        self.MyTable4.setColumnWidth(2, 90);
+        self.MyTable4.setColumnWidth(3, 90);
+        
+        
+        self.Button1=QPushButton("Channel 1")
+        self.Button2=QPushButton("Channel 2")
+        self.Button3=QPushButton("Channel 3")
+        self.Button4=QPushButton("Channel 4")
+        
+        
+        
+        
+        self.Down_layout = QHBoxLayout()
+        self.figure = plt.figure(figsize=(10,5), dpi=120)    
+        self.canvas = FigureCanvas(self.figure)
+        
+         ############################################################    
+    #def plotmap(self):
+        
+        #self.main_frame = QWidget()
+        
+        #self.mpl_toolbar = NavigationToolbar(self.canvas, self.main_frame)
+        self.list_view = QListView()
+        self.list_view.setWindowTitle('Example List')
+        self.list_view.setMinimumSize(400, 400)
+        self.model = QStandardItemModel(self.list_view)
+        
+        item1 = QStandardItem("channel1")
+        self.model.appendRow(item1)
+        item1.setCheckable(True)
+        self.list_view.setModel(self.model)
+##        channels = [
+##            'channel1', 
+##            'channel2', 
+##            'channel3', 
+##            'channel4', 
+##        ]
+## 
+##        for channel in channels:
+##            # create an item with a caption
+##            item = QStandardItem(channel)
+##         
+##            # add a checkbox to it
+##            item.setCheckable(True)
+##            self.model.appendRow(item)
+##        
+##        self.list_view.setModel(self.model)
+        
+        
+        
+        
+        
+        
+        
+ 
+        self.HeadGroupBox = QGroupBox(u'\tChannel')
+        self.HeadGroupBox2 = QGroupBox(u'\t Plot')
+        self.HeadGroupBox.setMaximumSize(1600,200)
+        #self.HeadGroupBox2.setMaximumSize(1600,500)
+ 
+        layout = QVBoxLayout()
+        self.HeadGroupBoxLayout = QGridLayout()
+        self.PlotGroupBoxLayout = QGridLayout()
+        self.Button1.clicked.connect(self.addParam)
+   
+        
+        self.HeadGroupBoxLayout.addWidget(self.MyTable1,1,1)
+        self.HeadGroupBoxLayout.addWidget(self.MyTable2,1,2)
+        self.HeadGroupBoxLayout.addWidget(self.MyTable3,1,3)
+        self.HeadGroupBoxLayout.addWidget(self.MyTable4,1,4)
+        
+        
+        self.HeadGroupBoxLayout.addWidget(self.Button1,0,1)
+        self.HeadGroupBoxLayout.addWidget(self.Button2,0,2)
+        self.HeadGroupBoxLayout.addWidget(self.Button3,0,3)
+        self.HeadGroupBoxLayout.addWidget(self.Button4,0,4)
+        #self.PlotGroupBoxLayout.addWidget(self.main_frame,0,0)   
+        #self.HeadGroupBoxLayout.addWidget(self.myFig,1,1)
+        self.HeadGroupBox.setLayout(self.HeadGroupBoxLayout)
+        self.HeadGroupBox2.setLayout(self.PlotGroupBoxLayout)
+        self.Down_layout.addWidget(self.list_view)
+        self.PlotGroupBoxLayout.addWidget(self.list_view,0,0)
+        
+        #splitter = QSplitter()
+        #splitter.addWidget(self.HeadGroupBox)
+        #splitter.setOrientation(Qt.Vertical)#
+        layout.addWidget(self.HeadGroupBox)
+        #layout.addWidget(self.main_frame)
+        
+        layout.addLayout(self.Down_layout)
+        self.setLayout(layout)
+        self.initUI()
+        
+    def addParam(self):
+        
+        self.Down_layout.addWidget(self.canvas)
+        
+        
+   
+
+    
+    def initUI(self,max_entries=10):
+        
+    #### plot initial ####
+        
+        self.axes = self.figure.add_subplot(111)
+        self.axes.set_xlabel('time(s)')
+        self.axes.set_ylabel('Sensor data')
+        self.axis_x = deque(maxlen=max_entries)
+        self.axis_y1 = deque(maxlen=max_entries)
+        self.axis_y2 = deque(maxlen=max_entries)
+        self.axis_y3 = deque(maxlen=max_entries)
+        self.axis_y4 = deque(maxlen=max_entries)
+        self.lineplot1, = self.axes.plot([], [], "ro-",label="c1")
+        self.lineplot2, = self.axes.plot([], [], "bo-",label="c2")
+        self.lineplot3, = self.axes.plot([], [], "go-",label="c3")
+        self.lineplot4, = self.axes.plot([], [], "yo-",label="c4")
+        self.axes.set_autoscaley_on(True)
+        
+    ####Data Thead start####
+        
+        self.DataThread = UpdateData()
+        self.DataThread.update_date1.connect(self.updatach1)
+        self.DataThread.update_date2.connect(self.updatach2)
+        self.DataThread.update_date3.connect(self.updatach3)
+        self.DataThread.update_date4.connect(self.updatach4)
+        self.DataThread.start()
+        
+    def PLOT(self, x, y):
+        
+        self.axis_x.append(x)
+        self.axis_y1.append(y[0])
+        self.axis_y2.append(y[1])
+        self.axis_y3.append(y[2])
+        self.axis_y4.append(y[3])
+        
+        self.lineplot2.set_data(self.axis_x, self.axis_y2)
+        self.lineplot3.set_data(self.axis_x, self.axis_y3)
+        self.lineplot4.set_data(self.axis_x, self.axis_y4)
+        #if item1.Checkable(True):
+            self.lineplot1.set_data(self.axis_x, self.axis_y1)
+        self.axes.set_xlim(self.axis_x[0], self.axis_x[-1] + 1e-15)
+        self.axes.set_ylim(0,28000)
+        self.axes.legend()
+        self.axes.relim()
+        self.axes.autoscale_view()
+        self.canvas.draw()
+        
+
+    def updatach1(self, data):
+        
+        self.PLOT( time.time()-timeint,data)
+        for i in range(len(data)):
+            str_data=str(data[i])
+            self.MyTable1.setItem(0,i,QTableWidgetItem(str_data))
+ 
+    def updatach2(self, data):
+        
+        for i in range(len(data)):
+            str_data=str(data[i])
+            self.MyTable2.setItem(0,i,QTableWidgetItem(str_data))
+       
+    def updatach3(self, data):
+
+        for i in range(len(data)):
+            str_data=str(data[i])
+            self.MyTable3.setItem(0,i,QTableWidgetItem(str_data))
+        
+    def updatach4(self, data):
+
+        for i in range(len(data)):
+            str_data=str(data[i])
+            self.MyTable4.setItem(0,i,QTableWidgetItem(str_data))
+           
+        
+class Read_Sensor_Value_Thread (threading.Thread):
+    def __init__(self):
+      threading.Thread.__init__(self)
+      print('initial')
+
+    def run(self):
+      print('Sensor get')      
+      #adc = Adafruit_ADS1x15.ADS1115(0x48)
+      adc1 =Adafruit_ADS1x15.ADS1115(0x48)
+      adc2= Adafruit_ADS1x15.ADS1115(0x49)
+      adc3= Adafruit_ADS1x15.ADS1115(0x4A)
+      adc4= Adafruit_ADS1x15.ADS1115(0x4B)
+      GAIN = 2/3
+   
+      while True :
+        values1=[0]*4
+        values2=[0]*4
+        values3=[0]*4
+        values4=[0]*4   
+        try:
+            for i in range(4):
+                values1[i]=adc1.read_adc(i, gain=GAIN)
+                values2[i]=adc2.read_adc(i, gain=GAIN)
+                values3[i]=adc3.read_adc(i, gain=GAIN)
+                values4[i]=adc4.read_adc(i, gain=GAIN)
+            event1.put(values1)
+            event2.put(values2)
+            event3.put(values3)
+            event4.put(values4)
+
+            time.sleep(0.5)
+        except:
+            e = sys.exc_info()[0]
+            ShowMsg('Error=' + str(e))
+
+if __name__ == '__main__':
+    app = QApplication(sys.argv)
+    win = Window()
+    pg.mkQApp()
+    Sensor=Read_Sensor_Value_Thread()
+    Sensor.start()
+    win.show() 
+    sys.exit(app.exec_())
+
