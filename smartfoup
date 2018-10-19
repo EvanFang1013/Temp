@@ -1,0 +1,587 @@
+    #!/usr/bin/python
+
+# MIT License
+# 
+# Copyright (c) 2017 John Bryan Moore
+# 
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+# 
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+# 
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+import time
+import csv
+import smbus
+import Adafruit_ADS1x15
+#from Adafruit_ADS1x15.single_ended import ADS1115
+
+from datetime import datetime
+import threading
+import sys
+import RPi.GPIO as GPIO
+import socket
+#import ReadSetup
+import datetime
+import queue
+import json
+
+
+ExitFlag = 0
+Battery_ExitFlag = 0
+z_Avg=0
+z_Max=0
+x_Max=0
+z_Min=0
+z_MeasureCnt=0
+SendToGateway_ExitFlag=0
+event_Q = queue.Queue()
+
+
+#import datetime
+
+def CreateSocket():
+    HOST = data["CIM_Gateway"]["IP"]
+    PORT = data["CIM_Gateway"]["Port"]
+    print("Host:" + str(HOST))
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(10)
+    print("after timeout set")
+    try:
+      # Connect to server and send data
+      sock.connect((HOST, PORT))
+      
+      return sock
+      # Receive data from the server and shut downH
+    except:
+      ShowMsg(sys.exc_info()[0])
+      ShowMsg('Create Socket Error!')
+      return None
+def SendDoorOpenEvent(FOUP_ID):
+    global data
+    global event_Q 
+    
+    now = datetime.datetime.now()
+    sendMsg="DoorOpen" + "," + FOUP_ID + ",,,,,,,," +"<EOF>"
+    try:
+       event_Q.put(sendMsg)
+       print("msg is put into queue...")
+    except queue.Full:
+       ShowMsg("queue is full....")
+  
+def SendDoorCloseEvent(FOUP_ID,x_Max,z_Max,z_Min,x_Base_max,MeasureCnt,Hum,Temp):
+    global event_Q
+    print("TEST")
+    #print(_humidity)
+    #print(str(temp))
+
+    sendMsg="DoorClose" + "," + FOUP_ID + "," +str(x_Max)+ "," +str(z_Max)\
+             + "," +str(z_Min) + "," + str(x_Base_max) + "," + str(MeasureCnt)+"," + str(Hum) + "," +str(Temp) + "," + "<EOF>"
+    try:
+       event_Q.put(sendMsg)
+       print("Msg is put into queue..")
+       print("Humidity: %.2f %%" %Hum)
+       print("Temperature: %.2f C" %Temp)                                       
+    except queue.Full:
+       ShowMsg("queue is full....")
+
+#GPIO callback
+class ReadGPIO_Thread(threading.Thread):
+   def __init__(self, threadID, name, multiple):
+      threading.Thread.__init__(self)
+      self.threadID = threadID
+      self.name = name
+      self.multiple = multiple
+      
+      print('Z ReadGPIO threadID : ', self.threadID)
+      print('Z ReadGPIO name : ', self.name)
+      print('Z ReadGpio multiple : ', self.multiple)
+   def Stop(self):
+      global GPIO_ExitFlag
+      GPIO_ExitFlag=1
+   def run(self):
+      global ExitFlag
+      global channel
+      global DoorStatus
+      global DoorOpenValue
+      global DoorCloseValue
+      global tRead_Z_Value
+      global x_Max
+      global z_Min
+      global z_Max
+      global x_Base_max
+      global z_MeasureCnt
+      global GPIO_ExitFlag
+      global humidity
+      global cTemp
+      GPIO_ExitFlag=0
+      
+      while GPIO_ExitFlag==0 :
+            
+            try:
+               GPIO_Value = GPIO.input(channel)
+
+               
+               if (GPIO_Value == DoorCloseValue and DoorStatus == "open"):
+                  DoorStatus = "close"
+                  try:
+        
+                     tRead_Z_Value.Stop()
+                     Temp_Humidity_reader.Stop()
+                     time.sleep(0.5)
+                     SendDoorCloseEvent(data["Context"]["FOUP_ID"],x_Max,z_Max,z_Min,x_Base_max,MeasureCnt,humidity,cTemp)
+                     GPIO.output(pow_enable,GPIO.LOW)
+                     print ("Stop to collect Data...")
+                     print("Door is close")
+                     
+                  except:
+                     e = sys.exc_info()[0]
+                     ShowMsg('Error=' + str(e))      
+                  
+               elif(GPIO_Value == DoorOpenValue and DoorStatus == "close"):
+                  GPIO.output(pow_enable,GPIO.HIGH)
+                  DoorStatus = "open"
+                  time.sleep(5)
+                  tRead_Z_Value = Read_Value_Thread(1, "Thread-1", 60)
+                  tRead_Z_Value.start()
+                  Temp_Humidity_reader=Temp_Humidity_Thread(2,"Temp_Humidity")
+                  Temp_Humidity_reader.start()
+                  SendDoorOpenEvent(data["Context"]["FOUP_ID"])
+                  print("Door is Open")
+                 
+               time.sleep(0.2)
+            except:
+                     e = sys.exc_info()[0]
+                     print('Error=' + str(e))
+              
+            
+            
+
+
+#GPIO Setup
+GPIO.setmode(GPIO.BOARD)
+channel=36
+pow_enable=40
+GPIO.setup(channel, GPIO.IN)
+GPIO.setup(pow_enable, GPIO.OUT)
+DoorStatus="close"
+DoorOpenValue = 1
+DoorCloseValue = 0
+
+def sendOutMsg(msgToSend):
+    sock = None
+    try:
+      sock = CreateSocket()
+      print("create socket ok....")
+    except:
+      print("create socket failed....")
+    sendStatus = False
+       
+    if sock is not None:
+    
+       print(" sock is not None")
+       try:
+           
+           sock.sendall(msgToSend.encode(encoding='utf_8',errors='strict'))
+           print("After send all")      
+           received = sock.recv(1024)
+           print(received)
+           
+           sendStatus = True
+       
+       except:
+           e = sys.exc_info()[0]
+           print('Error=' + str(e))
+           print("Send to CIM Gateway Failed!!")
+          
+           sendStatus = False
+       finally:
+         sock.close()
+         return sendStatus
+    else:
+       print("Send to CIM Gateway Failed!!")
+       return False    
+class SendToGateway_Thread (threading.Thread):
+   def __init__(self, threadID, name, multiple):
+      threading.Thread.__init__(self)
+      self.threadID = threadID
+      self.name = name
+      self.multiple = multiple
+      
+      print('Z Gateway threadID : ',self.threadID)
+      print('Z Gateway name : ',self.name)
+      print('Z Gateway multiple',self.multiple)
+      FOUP_ID = 'SMG0001'
+   def Stop(self):
+      print('SendToGatway stop...')
+      global SendToGateway_ExitFlag
+      SendToGateway_ExitFlag=1
+   def run(self):
+      print('into.....')
+      global event_Q
+      global SendToGateway_ExitFlag
+      SendToGateway_ExitFlag=0
+      
+      while SendToGateway_ExitFlag==0:
+            msg=""
+            
+            try:
+                   if msg==""and event_Q.qsize() > 0:                
+                      
+                      msg= event_Q.get()
+                     
+                   
+                   if msg != "":
+                      print('[MSG]:',msg)
+                      if sendOutMsg(msg):
+                         print("Send to gateway successfully....")
+                         print("Sent msg:" + msg)
+                         msg=""
+                      else:
+                         print("Send to gateway failed....")
+                         print(msg) 
+                   
+            except:
+                  e = sys.exc_info()[0]
+                  ShowMsg('Error=' + str(e))
+                  time.sleep(2)
+            time.sleep(1)
+class Temp_Humidity_Thread (threading.Thread):
+   def __init__(self, threadID, name):
+      threading.Thread.__init__(self)
+      self.threadID = threadID
+      self.name = name
+      
+      
+      
+   def Stop(self):
+      print('Temp_Humidity data query stop...')
+   def run(self):
+      global cTemp
+      global humidity
+      cTemp=0
+      humidity=0
+      print('Temp_Humidity data query start...')
+      data_stabletime=5
+      time.sleep(data_stabletime)
+      try:
+          bus = smbus.SMBus(1)
+          cTemp=tempdata(bus)
+          humidity=humiditydata(bus)
+                   
+                   
+      except:
+                  e = sys.exc_info()[0]
+                  ShowMsg('Error=' + str(e))
+                  time.sleep(2)
+def tempdata(bus):
+    bus.write_byte(0x40, 0xF3)
+    time.sleep(0.5)
+    data0 = bus.read_byte(0x40)
+    data1 = bus.read_byte(0x40)
+
+# Convert the data
+    temp = data0 * 256 + data1
+    temp= -46.85 + ((temp * 175.72) / 65536.0)
+    return round(temp,2)
+def humiditydata(bus):
+    
+    bus.write_byte(0x40, 0xF5)
+    time.sleep(0.5)
+    data0 = bus.read_byte(0x40)
+    data1 = bus.read_byte(0x40)
+# Convert the data
+    humidity = data0 * 256 + data1
+    humidity = -6 + ((humidity * 125.0) / 65536.0)
+    return round(humidity,2)
+
+
+class Read_Value_Thread (threading.Thread):
+   def __init__(self, threadID, name, multiple):
+      threading.Thread.__init__(self)
+      self.threadID = threadID
+      self.name = name
+      self.multiple = multiple
+      
+      print('threadID : ', threadID)
+      print('name : ', name)
+      print('multiple : ', multiple)
+   def Stop(self):
+      print('Stop ExitFlag')
+      global ExitFlag
+      
+      ExitFlag=1
+      
+   def run(self):
+      print('Run Thread')
+      global ExitFlag      
+      global x_Max
+      global z_Avg
+      global z_Max
+      global z_Min
+      global MeasureCnt
+      global x_Base_max
+      print('Adafruit x&z_value : ', '============>here')
+      adc = Adafruit_ADS1x15.ADS1115(0x48)
+      GAIN = 2/3
+      
+     
+      ShowMsg('Query Started...')
+      count=0
+      ExitFlag=0
+      x_Flag=0
+      z_Flag=0
+      brk_flag=0
+      pre_len=0
+      xbase_start=0
+      zbase=99999
+      zbaselist=list([])
+      xbase=99999
+      xbaselist=list([])
+      zValueList=list([])
+      xValueList=list([])
+      xDetValueList=list([])
+      startTime = datetime.datetime.now()
+      strStartTime=startTime.strftime("%Y-%m-%d %H:%M:%S.%f")
+      print("Zvalue","Xvalue\n")
+      #xValue=0
+      while ExitFlag==0 :
+        try:                           
+               count=count+1                        
+               zValue = adc.read_adc(1,gain=GAIN,data_rate=860)               
+               xValue = adc.read_adc(0,gain=GAIN,data_rate=860)
+               times=datetime.datetime.now()
+               aa=times.strftime("%Y-%m-%d %H:%M:%S.%f")
+               print('time: '+aa+'  '+str(count)+' :',zValue,xValue)
+               """================================================="""
+               """ z_value detect fuction"""
+               """================================================="""
+               if count>30:
+                   zbase=max(zbaselist[10:30])
+                   
+                   
+               else:
+                   zbaselist.append(zValue)
+                   
+                   
+               print (zbase)
+               if zValue>=zbase+300 and z_Flag==0: #wait Robot arm into foup and collect arm z distance
+                   zValue_mm=(zValue-2700)/158.57+65# change to mm 
+                   zValueList.append(round(zValue_mm,4))
+                   z_count=count
+                   brk_flag=1
+                   print("OKOK")
+                   #print("zvalue counts of data=",z_count)
+               elif zValue<zbase+500 and (brk_flag - z_Flag)==1: # if arm start pick wafer stop data collection
+                   z_Flag=1
+                   z_endTime = datetime.datetime.now()
+                   z_strEndTime = z_endTime.strftime("%Y-%m-%d %H:%M:%S.%f")
+                   z_duration =z_endTime - startTime
+                   print("z value stop data collect...")
+               """================================================="""
+               """ X_value detect fuction"""
+               """================================================="""
+               xDetValueList.append(xValue)
+               if xValue>7000 : # no wafer , vlaue will lower 7000, wafer exist will over 7000   
+                   xValueList.append(xValue)
+                   
+               
+                   
+    
+               time.sleep(0.008)
+               
+        except:
+                     e = sys.exc_info()[0]
+                     ShowMsg('Error=' + str(e))
+                     
+                
+      
+      
+      endTime = datetime.datetime.now()
+      strEndTime = endTime.strftime("%Y-%m-%d %H:%M:%S.%f")
+      duration = endTime - startTime
+      
+      try:
+         MeasureCnt=count
+         print("Count=" + str(MeasureCnt))
+         print("Start Time = " + strStartTime)
+         print("End Time = " + strEndTime)
+         print("Duration = " + str(duration))
+         #Z_value data calculate#
+         if len(zValueList)>0:
+             print("Z_Max = " + str(max(zValueList)))
+             print("Z_Min = " + str(min(zValueList)))
+             print("Z_Avg=" + str(sum(zValueList) / len(zValueList)))
+             z_len=len(zValueList)
+             print("Z_Count= "+str(z_len))
+             z_Avg = sum(zValueList[10:(z_len-10)]) * 1.0 / (z_len-20)
+             z_Max = max(zValueList[10:(z_len-10)])
+             z_Min = min(zValueList[10:(z_len-10)])
+             
+         else:
+              z_Max=0
+              z_Min=0
+              zValueList.clear()
+              zValueList=["no","detect","Robot","arm"]
+              print("no detect atm arm")
+         #X_value data calculate#
+         xlen=len(xDetValueList)
+         for i in range (0,xlen):
+             if xDetValueList[i]<=7000 and xDetValueList[i]>=1000:
+                 pre_len=i-1
+                 break
+             else:
+                 pre_len=0
+                 
+         
+         total_len=len(xValueList)
+         print("X_totalcount:",total_len)
+         if(total_len-pre_len)<30: # judge power off effect vlaue false alarm
+             pre_len=0
+         print("pre:",pre_len)
+         
+         if  pre_len>0:
+             xbase_start=pre_len//2
+             #print(xbase_start)
+             x_Base_max=max(xValueList[xbase_start:pre_len])# wafer in foup position before Robot transfer
+             print("x_base:",x_Base_max)
+             x_Max=max(xValueList[(pre_len+5):(total_len-10)])# wafer in foup position after Robot transfer
+             print("x_Max=",x_Max)
+             print("wafer change position after transfer =",(x_Max-x_Base_max)) #compare wafer position        
+         else:
+             xValueList.clear()
+             xValueList=["wafer","no","move","out"]
+             print("wafer no move out,pls check it")
+             x_Max=0
+             x_Base_max=0
+             print("x_Max=",x_Max)   
+         print("=======================================================")
+         
+         print("************************************************")
+         SaveValueToFile(zValueList,xValueList,z_Max,z_Min,x_Base_max,x_Max,humidity,cTemp)
+         zValueList.clear()
+         xValueList.clear()
+         zbaselist.clear()
+         xDetValueList.clear()
+      except:
+         e = sys.exc_info()[0]
+         ShowMsg('Error=' + str(e))
+
+           
+def ShowMsg(_Desc):
+        
+        print(_Desc)
+        
+def SaveValueToFile(zValueList,xValueList,Zmax,Zmin,Xbase,Xmax,Humi,Temp):
+   column="Zvalue,Xvalue,ZvauleMax,ZvalueMin,XbaseMax,XvalueMax,Humidity,Temperature\n"
+   local=time.asctime(time.localtime(time.time()))
+   cw = open("Rotvalue "+local+".csv",'w')
+   print("Store Start...")
+   cw.write(column)
+   test=set([len(zValueList),len(xValueList)])
+   loop= max(test)
+   print("file max len = ",loop)
+   print("file len xlist= ",len(xValueList))
+   print("file len zlist= ",len(zValueList))
+
+   for i in range(loop):
+        if i>=int(len(zValueList)):
+            out=""+","+str(xValueList[i])+","+str(Zmax)+","+str(Zmin)+","+str(Xbase)+","+str(Xmax)+","+str(Humi)+","+str(Temp)+"\n"
+            cw.write(out)
+        elif i>=int(len(xValueList)):
+            out=str(zValueList[i])+","+""+","+str(Zmax)+","+str(Zmin)+","+str(Xbase)+","+str(Xmax)+","+str(Humi)+","+str(Temp)+"\n"
+            cw.write(out)
+        else:
+            out=str(zValueList[i])+","+str(xValueList[i])+","+str(Zmax)+","+str(Zmin)+","+str(Xbase)+","+str(Xmax)+","+str(Humi)+","+str(Temp)+"\n"
+            cw.write(out)
+        
+        
+            
+        
+       
+        
+        
+
+
+
+if __name__ == '__main__':
+     print("Start")
+     with open('/home/pi/Smartfoup/Configuration/zSensor_Setting.json', 'r') as f:
+        data = json.load(f)
+     
+     print(data["Context"]["FOUP_ID"])
+    
+     
+     print('Ready...')
+     # Create new threads
+     print('Ready send')
+     tSendToGateway = SendToGateway_Thread(3, "Thread-SendToGateway", 60)
+     tSendToGateway.start()
+     print('send finish')
+     GPIO_ExitFlag = 0
+     tReadGPIO_Loop = ReadGPIO_Thread(1, "Thread-1", 60)
+     tReadGPIO_Loop.start()     
+     
+
+     print('------------Start------------')
+
+     try:
+        while True:
+              
+           #do nothing
+           time.sleep(1)
+     except KeyboardInterrupt:
+        print('Main Interrupted')
+        ExitFlag=1
+        Battery_ExitFlag=1 
+        SendToGateway_ExitFlag=1
+        GPIO_ExitFlag = 1
+             
+        try:
+            GPIO.remove_event_detect(channel)
+            GPIO.cleanup(channel)
+            GPIO.cleanup(pow_enable)
+            client.close()
+            sys.exit(0)
+            time.sleep(5)
+        except SystemExit:
+            GPIO.remove_event_detect(channel)
+            GPIO.cleanup(channel)
+            os._exit(0)
+            time.sleep(5)
+        except:
+            GPIO.remove_event_detect(channel)
+            GPIO.cleanup(channel)
+            e = sys.exc_info()[0]
+            ShowMsg('Error=' + str(e))
+           
+
+    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
