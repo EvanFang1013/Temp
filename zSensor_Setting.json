@@ -1,0 +1,11 @@
+{
+    "Context": {
+        "FOUP_ID": "BN0918U",
+        "Other": "Other"
+    },
+    "CIM_Gateway": {
+        "IP": "127.0.0.1",
+        "Port": 8200
+    }
+
+}
